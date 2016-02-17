@@ -1,1 +1,361 @@
+#import matplotlib.pyplot as plt
+import numpy as np
+#import numpy.random as npr
+import math
+import collections
+import copy
+import time
+from collections import defaultdict
+
+dataset = []
+
+def GetData():
+        global dataset
+        dataset = []
+        file = open("data-2016.csv", "r")
+        av = file.readlines()
+        file.close()
+        for i in range(len(av)):
+                dataset.append([])
+                string = av[i].split()
+                for j in range(len(string)):
+                        dataset[len(dataset)-1].append(string[j])
+
+def GetUniqueCourses():
+        courses = dict()
+        for i in range(len(dataset)):
+                j = 2
+                while j < len(dataset[i]):
+                        if dataset[i][j] not in courses.keys():
+                                courses[dataset[i][j]] = copy.deepcopy(dataset[i][j+1])
+                        j += 5
+        return courses
+
+def GetTransactions():
+        trans = []
+        for i in range(len(dataset)):
+                j = 2
+                courses = []
+                while j < len(dataset[i]):
+                        if (int(dataset[i][j]) not in courses):
+                                courses.append(int(dataset[i][j]))
+                        j += 5
+                trans.append(sorted(courses))
+        return sorted(trans)
+
+def GetCoursesCodes():
+    return sorted(list(map(int, GetUniqueCourses().keys())))
+
+
+def SupportCount(transactions, itemset):
+        support_count = 0
+        for i in range(len(transactions)):
+            matches = []
+            if (transactions[i][0] <= itemset[0]):
+                for j in range(len(transactions[i])):
+                    if (transactions[i][j] <= itemset[len(itemset)-1]):
+                        if ((transactions[i][j] in itemset) and (transactions[i][j] not in matches)):
+                            matches.append(transactions[i][j])
+                    else:
+                        break
+            if len(matches) == len(itemset):
+                support_count += 1
+        return support_count
+
+
+def Support(transactions, itemset):
+        return SupportCount(transactions, itemset)/len(transactions)
+
+
+def build_graph(set, k0, k, fixed, agraph):
+    if len(fixed) != k0:
+        for j in range(len(set)-k + 1):
+            agraph[fixed[len(fixed)-1], set[j]] = True
+            build_graph(set[j+1:], k0, k - 1, fixed + [set[j]], agraph)
+    else:
+        for j in range(len(set)):
+            agraph[fixed[len(fixed)-1], set[j]] = True
+
+
+def enumerate_graphs(courses_num, transactions, k):
+    results = []
+    for i in range(len(transactions)):
+        results.append(np.zeros((courses_num+1, courses_num+1), dtype=bool))
+        if len(transactions[i]) >= k:
+            build_graph(transactions[i], k, k, [0], results[len(results)-1])
+    return results
+
+
+def search_graph(g, itemset, key, prev_node):
+    #g - graph, g_dict - course codes translation to the range
+    #itemset - the set of items that we search, key - the number of the item in the itemset we search
+    result = False
+    cur_node = itemset[key]
+    if int(g[prev_node][cur_node]) == True:
+        if key < (len(itemset) - 1):
+            result = search_graph(g, itemset, key+1, cur_node)
+        else:
+            result = True
+    return result
+
+
+def support_count(graphs, itemset, prev_node):
+        support_count = 0
+        for i in range(len(graphs)):
+            found = search_graph(graphs[i], itemset, 0, prev_node)
+            if found:
+                support_count += 1
+        return support_count
+
+
+def support(graphs, itemset, graphs_len, prev_node):
+    return support_count(graphs, itemset, prev_node)/graphs_len
+
+
+def get_indices(graphs, itemset):
+        graph_indeces = []
+        for i in range(len(graphs)):
+            found = search_graph(graphs[i], itemset, 0, 0)
+            if found == True:
+                graph_indeces.append(i)
+        return graph_indeces
+
+
+def get_new_trans(courses, transactions):
+    new_trans = []
+    #modified transactions, with only items survived first pruning
+    #every item of the transaction is the number of the course code from 1 to len(courses)
+    for i in range(len(transactions)):
+        trans = []
+        for j in range(len(transactions[i])):
+            if transactions[i][j] in courses:
+                trans.append(courses.index(transactions[i][j])+1)
+        new_trans.append(trans)
+    return new_trans
+
+
+def Union(itemset1, itemset2):
+    return list(sorted(set().union(itemset1, itemset2)))
+
+
+def Generate(lists):
+    candidates = []
+    if len(lists) > 1:
+        index = 0
+        while index < len(lists) - 1:
+            first = lists[index]
+            index2 = index + 1
+            while lists[index2] != 'BOUND':
+                second = lists[index2]
+                candidates.append(Union(first, second))
+                index2 += 1
+            candidates.append('BOUND')
+            index += 1
+            while (lists[index] == 'BOUND') and (index < len(lists) - 1):
+                index += 1
+    return candidates
+
+
+def binary_search(alist, item):
+    if (len(alist) == 0):
+        return False
+    else:
+        midpoint = len(alist)//2
+        if alist[midpoint]==item:
+            return True
+        else:
+            if (item < alist[midpoint] and item >= alist[0]):
+                return binary_search(alist[:midpoint], item)
+            elif (item <= alist[len(alist)-1]):
+                return binary_search(alist[midpoint+1:], item)
+            else:
+                return False
+
+
+def binary_search_bounds(alist, item):
+    if (len(alist) == 0):
+        return 0, 0
+    else:
+        midpoint = len(alist)//2
+        if alist[midpoint][0]==item:
+            return alist[midpoint][2], alist[midpoint][1]
+        else:
+            if (item < alist[midpoint][0] and item >= alist[0][0]):
+                return binary_search_bounds(alist[:midpoint], item)
+            elif (item <= alist[len(alist)-1][0]):
+                return binary_search_bounds(alist[midpoint+1:], item)
+            else:
+                return 0, 0
+
+
+def Apriori(transactions, min_support, k):
+    candidates = []
+    prev_lists = []
+    #list of k-1 prev candidates
+    current_k = 1
+    #get all unique course codes
+    courses = sorted(GetCoursesCodes())
+    #first pruning - eliminate all course codes that are not frequent
+    for i in range(len(courses)):
+        if Support(transactions, [courses[i]]) > min_support:
+            candidates.append(courses[i])
+    #save all frequent course codes
+    courses = copy.deepcopy(candidates)
+    courses_len = len(candidates)
+    #reinitialize candidates, change all original course codes with range(1, courses_len+1)
+    candidates = []
+    for i in range(1, courses_len+1):
+        candidates.append([i])
+    #change original transactions acording to the new course codes
+    new_trans = get_new_trans(courses, transactions)
+    #delete old transactions
+    del transactions
+    #build an enumeration graph
+    graphs = enumerate_graphs(courses_len, new_trans, 2)
+    graphs_len = len(graphs)
+
+    courses_indices = []
+    courses_indices.append([0])
+    for i in range(len(candidates)):
+        courses_indices.append(get_indices(graphs, candidates[i]))
+
+    candidates.append('BOUND')
+    #start of the main cycle, where curent_k is the current length of the itemsets
+    #in which graphs courses appear
+    result = candidates
+    while (len(candidates) != 0) and (current_k < k):
+        current_k += 1
+        candidates = Generate(candidates)
+        print('Before pruning: ', len(candidates))
+        #additional pruning
+        if current_k > 2:
+            now1 = time.time()
+            if current_k < 4:
+                i = 0
+                while i < len(candidates):
+                    pruned = False
+                    if candidates[i] != 'BOUND':
+                        for j in range(len(candidates[i])-2):
+                            #determine the scope of search
+                            cand = candidates[i][0:j]+candidates[i][j+1:]
+                            b1, b2 = binary_search_bounds(prev_prev_lists, cand[0:current_k-2])
+                            if binary_search(prev_lists[b1+1:b2], cand) == False:
+                                candidates.pop(i)
+                                pruned = True
+                                break
+                    else:
+                        if ((i > 0) and (candidates[i-1] == 'BOUND')) or (i == 0):
+                            candidates.pop(i)
+                            pruned = True
+                    if pruned == False:
+                        i += 1
+                now2 = time.time()
+                del prev_lists
+                print('First pruning: ', now2-now1)
+            '''
+            i = 0
+            #update the transactions' graphs
+            now1 = time.time()
+            unique_courses_bool = np.zeros((courses_len + 1), dtype = bool)
+            while i < len(candidates):
+                #first k-1 items are the same before BOUND
+                while i < len(candidates) and candidates[i] == 'BOUND':
+                    i += 1
+                if i < len(candidates):
+                    for j in range(current_k):
+                        unique_courses_bool[candidates[i][j]] = True
+                while i < len(candidates) and candidates[i] != 'BOUND':
+                    unique_courses_bool[candidates[i][current_k-1]] = True
+                    i += 1
+                i += 1
+            i = 0
+            j = 0
+            while i < (len(graphs)):
+                if sum(graphs[i][0]*unique_courses_bool) + 1 < current_k:
+                    graphs.pop(i)
+                    j += 1
+                else:
+                    i += 1
+            del unique_courses_bool
+            now2 = time.time()
+            print('Graphs pruned: ', j, now2-now1, len(candidates))
+            '''
+
+            #pruning by checkng current_k - 2 sequences before BOUND first and then continuing
+            now1 = time.time()
+            i = 0
+            prev_prev_lists = []
+            prev_prev_lists.append([[0], 0, 0])
+            while i < len(candidates):
+                if candidates[i] != 'BOUND':
+                    #the first item of the candidate
+                    indices = set(courses_indices[candidates[i][0]])
+                    for j in range(1, current_k-1):
+                        indices = indices & set(courses_indices[candidates[i][j]])
+                    indices = list(indices)
+                    #indices = get_indices(graphs, candidates[i][0:current_k-1])
+                    prev_node = candidates[i][current_k-2]
+                    sub_graphs = [graphs[index] for index in indices]
+                    while (candidates[i] != 'BOUND') and (i < len(candidates)):
+                        if (support(sub_graphs, candidates[i][current_k-1:], graphs_len, prev_node) <= min_support):
+                            candidates.pop(i)
+                        else:
+                            i += 1
+                elif ((i > 0 and candidates[i-1] == 'BOUND') or i == 0):
+                        candidates.pop(i)
+                #if BOUND
+                else:
+                    #we save k-1 elements of the candidate, i - bound index in the prev_lists, prev bound
+                    prev_prev_lists.append([candidates[i-1][0:current_k-1], i, prev_prev_lists[len(prev_prev_lists)-1][1]])
+                    i += 1
+            now2 = time.time()
+            print('Third pruning: ', now2-now1)
+        else:
+            prev_prev_lists = []
+            prev_prev_lists.append([[0], 0, 0])
+            i = 0
+            prev_node = 0
+            while i < len(candidates):
+                if (candidates[i] != 'BOUND'):
+                    if (support(graphs, candidates[i], graphs_len, prev_node) <= min_support):
+                        candidates.pop(i)
+                    else:
+                        i += 1
+                    #the candidate remains
+                elif ((i > 0 and candidates[i-1] == 'BOUND') or i == 0):
+                        candidates.pop(i)
+                #if BOUND
+                else:
+                    #we save k-1 elements of the candidate, i - bound index in the prev_lists, prev bound
+                    prev_prev_lists.append([candidates[i-1][0:current_k-1], i, prev_prev_lists[len(prev_prev_lists)-1][1]])
+                    i += 1
+
+
+        #now we have only frequent candidates
+        #prev_lists = [item for item in candidates if item != 'BOUND']
+        if len(candidates) == 0:
+            result = prev_lists
+        else:
+            result = candidates
+        prev_lists = copy.deepcopy(candidates)
+        print('Apriori', len(candidates), 'k: ', str(current_k))
+    del graphs
+    while 'BOUND' in result:
+        result.remove('BOUND')
+    for i in range(len(result)):
+        for j in range(len(result[i])):
+            result[i][j] = courses[result[i][j]-1]
+    return result
+
+
+def main():
+        global dataset
+        GetData()
+        combs = Apriori(GetTransactions(), 0.04, 100)
+        print(len(combs))
+        print(combs)
+
+
+if __name__ == "__main__":
+           main()
 
