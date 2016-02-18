@@ -1,16 +1,11 @@
-#import matplotlib.pyplot as plt
 import numpy as np
-#import numpy.random as npr
 import math
 import collections
 import copy
 import time
-from collections import defaultdict
 
-dataset = []
 
-def GetData():
-        global dataset
+def get_data():
         dataset = []
         file = open("data-2016.csv", "r")
         av = file.readlines()
@@ -20,18 +15,10 @@ def GetData():
                 string = av[i].split()
                 for j in range(len(string)):
                         dataset[len(dataset)-1].append(string[j])
+        return dataset
 
-def GetUniqueCourses():
-        courses = dict()
-        for i in range(len(dataset)):
-                j = 2
-                while j < len(dataset[i]):
-                        if dataset[i][j] not in courses.keys():
-                                courses[dataset[i][j]] = copy.deepcopy(dataset[i][j+1])
-                        j += 5
-        return courses
 
-def GetTransactions():
+def get_transactions(dataset):
         trans = []
         for i in range(len(dataset)):
                 j = 2
@@ -43,102 +30,75 @@ def GetTransactions():
                 trans.append(sorted(courses))
         return sorted(trans)
 
-def GetCoursesCodes():
-    return sorted(list(map(int, GetUniqueCourses().keys())))
+
+def get_unique_courses(dataset):
+        courses = dict()
+        for i in range(len(dataset)):
+                j = 2
+                while j < len(dataset[i]):
+                        if dataset[i][j] not in courses.keys():
+                                courses[dataset[i][j]] = copy.deepcopy(dataset[i][j+1])
+                        j += 5
+        return courses
 
 
-def SupportCount(transactions, itemset):
-        support_count = 0
-        for i in range(len(transactions)):
-            matches = []
-            if (transactions[i][0] <= itemset[0]):
-                for j in range(len(transactions[i])):
-                    if (transactions[i][j] <= itemset[len(itemset)-1]):
-                        if ((transactions[i][j] in itemset) and (transactions[i][j] not in matches)):
-                            matches.append(transactions[i][j])
-                    else:
-                        break
-            if len(matches) == len(itemset):
-                support_count += 1
-        return support_count
+def get_course_codes(dataset):
+    return sorted(list(map(int, get_unique_courses(dataset).keys())))
 
 
-def Support(transactions, itemset):
-        return SupportCount(transactions, itemset)/len(transactions)
-
-
-def build_graph(set, k0, k, fixed, agraph):
-    if len(fixed) != k0:
-        for j in range(len(set)-k + 1):
-            agraph[fixed[len(fixed)-1], set[j]] = True
-            build_graph(set[j+1:], k0, k - 1, fixed + [set[j]], agraph)
-    else:
-        for j in range(len(set)):
-            agraph[fixed[len(fixed)-1], set[j]] = True
-
-
-def enumerate_graphs(courses_num, transactions, k):
-    results = []
-    for i in range(len(transactions)):
-        results.append(np.zeros((courses_num+1, courses_num+1), dtype=bool))
-        if len(transactions[i]) >= k:
-            build_graph(transactions[i], k, k, [0], results[len(results)-1])
-    return results
-
-
-def search_graph(g, itemset, key, prev_node):
+def search_trans(t, itemset, key):
     #g - graph, g_dict - course codes translation to the range
     #itemset - the set of items that we search, key - the number of the item in the itemset we search
     result = False
-    cur_node = itemset[key]
-    if int(g[prev_node][cur_node]) == True:
+    if int(t[itemset[key]]) == True:
         if key < (len(itemset) - 1):
-            result = search_graph(g, itemset, key+1, cur_node)
+            result = search_trans(t, itemset, key+1)
         else:
             result = True
     return result
 
 
-def support_count(graphs, itemset, prev_node):
+def support_count(bool_trans, itemset):
         support_count = 0
-        for i in range(len(graphs)):
-            found = search_graph(graphs[i], itemset, 0, prev_node)
+        for i in range(len(bool_trans)):
+            found = search_trans(bool_trans[i], itemset, 0)
             if found:
                 support_count += 1
         return support_count
 
 
-def support(graphs, itemset, graphs_len, prev_node):
-    return support_count(graphs, itemset, prev_node)/graphs_len
-
-
-def get_indices(graphs, itemset):
-        graph_indeces = []
-        for i in range(len(graphs)):
-            found = search_graph(graphs[i], itemset, 0, 0)
-            if found == True:
-                graph_indeces.append(i)
-        return graph_indeces
-
-
-def get_new_trans(courses, transactions):
-    new_trans = []
-    #modified transactions, with only items survived first pruning
+def support(bool_trans, itemset, trans_len):
+    return support_count(bool_trans, itemset)/trans_len
+    
+    
+    def create_matrix(dataset):
+    transactions = get_transactions(dataset)
+    courses = get_course_codes(dataset)
+    new_trans = np.zeros((len(transactions), len(courses)), dtype = bool)
     #every item of the transaction is the number of the course code from 1 to len(courses)
     for i in range(len(transactions)):
-        trans = []
         for j in range(len(transactions[i])):
-            if transactions[i][j] in courses:
-                trans.append(courses.index(transactions[i][j])+1)
-        new_trans.append(trans)
-    return new_trans
+            new_trans[i][courses.index(transactions[i][j])] = True
+    return new_trans, courses
 
 
-def Union(itemset1, itemset2):
+def update_matrix(matrix, courses):
+    #the list of popular courses
+    new_matrix = np.zeros((len(matrix), len(courses)), dtype = bool)
+    candidates = []
+    for i in range(len(courses)):
+        candidates.append([i])
+        for j in range(len(matrix)):
+            if matrix[j][courses[i]] == True:
+                new_matrix[j][i] = True
+    return new_matrix, candidates
+    
+    
+    def Union(itemset1, itemset2):
     return list(sorted(set().union(itemset1, itemset2)))
 
 
-def Generate(lists):
+def generate(lists):
     candidates = []
     if len(lists) > 1:
         index = 0
@@ -188,49 +148,41 @@ def binary_search_bounds(alist, item):
                 return 0, 0
 
 
-def Apriori(transactions, min_support, k):
+def Apriori(trans_matrix, courses, min_support, k):
+    #here courses the original set of courses
     candidates = []
     prev_lists = []
     #list of k-1 prev candidates
     current_k = 1
-    #get all unique course codes
-    courses = sorted(GetCoursesCodes())
-    #first pruning - eliminate all course codes that are not frequent
-    for i in range(len(courses)):
-        if Support(transactions, [courses[i]]) > min_support:
-            candidates.append(courses[i])
-    #save all frequent course codes
-    courses = copy.deepcopy(candidates)
-    courses_len = len(candidates)
-    #reinitialize candidates, change all original course codes with range(1, courses_len+1)
-    candidates = []
-    for i in range(1, courses_len+1):
-        candidates.append([i])
-    #change original transactions acording to the new course codes
-    new_trans = get_new_trans(courses, transactions)
-    #delete old transactions
-    del transactions
-    #build an enumeration graph
-    graphs = enumerate_graphs(courses_len, new_trans, 2)
-    graphs_len = len(graphs)
+    trans_len = len(trans_matrix)
 
+    #first pruning - eliminate all course codes that are not frequent
+    supports = np.sum(trans_matrix, axis = 0)/trans_len
+    frequent_courses = []
+    for i in range(len(courses)):
+        if supports[i] > min_support:
+            candidates.append(i)
+            frequent_courses.append(courses[i])
+    trans_matrix, candidates = update_matrix(trans_matrix, candidates)
+
+    #save all transaction numbers in which courses appear
     courses_indices = []
-    courses_indices.append([0])
     for i in range(len(candidates)):
-        courses_indices.append(get_indices(graphs, candidates[i]))
+        courses_indices.append([j for j in range(trans_len) if trans_matrix[j][candidates[i]] == True])
 
     candidates.append('BOUND')
     #start of the main cycle, where curent_k is the current length of the itemsets
-    #in which graphs courses appear
+    #in which transaction courses appear
     result = candidates
     while (len(candidates) != 0) and (current_k < k):
         current_k += 1
-        candidates = Generate(candidates)
+        candidates = generate(candidates)
         print('Before pruning: ', len(candidates))
         #additional pruning
         if current_k > 2:
             now1 = time.time()
-            if current_k < 4:
+            #as k grows the first pruning step becomes inefficient
+            if current_k < 5:
                 i = 0
                 while i < len(candidates):
                     pruned = False
@@ -252,83 +204,36 @@ def Apriori(transactions, min_support, k):
                 now2 = time.time()
                 del prev_lists
                 print('First pruning: ', now2-now1)
-            '''
-            i = 0
-            #update the transactions' graphs
-            now1 = time.time()
-            unique_courses_bool = np.zeros((courses_len + 1), dtype = bool)
-            while i < len(candidates):
-                #first k-1 items are the same before BOUND
-                while i < len(candidates) and candidates[i] == 'BOUND':
-                    i += 1
-                if i < len(candidates):
-                    for j in range(current_k):
-                        unique_courses_bool[candidates[i][j]] = True
-                while i < len(candidates) and candidates[i] != 'BOUND':
-                    unique_courses_bool[candidates[i][current_k-1]] = True
-                    i += 1
-                i += 1
-            i = 0
-            j = 0
-            while i < (len(graphs)):
-                if sum(graphs[i][0]*unique_courses_bool) + 1 < current_k:
-                    graphs.pop(i)
-                    j += 1
-                else:
-                    i += 1
-            del unique_courses_bool
-            now2 = time.time()
-            print('Graphs pruned: ', j, now2-now1, len(candidates))
-            '''
 
-            #pruning by checkng current_k - 2 sequences before BOUND first and then continuing
-            now1 = time.time()
-            i = 0
-            prev_prev_lists = []
-            prev_prev_lists.append([[0], 0, 0])
-            while i < len(candidates):
-                if candidates[i] != 'BOUND':
+        #pruning by checkng current_k - 2 sequences before BOUND first and then continuing
+        now1 = time.time()
+        i = 0
+        prev_prev_lists = []
+        prev_prev_lists.append([[0], 0, 0])
+        while i < len(candidates):
+            if candidates[i] != 'BOUND':
                     #the first item of the candidate
-                    indices = set(courses_indices[candidates[i][0]])
-                    for j in range(1, current_k-1):
-                        indices = indices & set(courses_indices[candidates[i][j]])
-                    indices = list(indices)
-                    #indices = get_indices(graphs, candidates[i][0:current_k-1])
-                    prev_node = candidates[i][current_k-2]
-                    sub_graphs = [graphs[index] for index in indices]
-                    while (candidates[i] != 'BOUND') and (i < len(candidates)):
-                        if (support(sub_graphs, candidates[i][current_k-1:], graphs_len, prev_node) <= min_support):
-                            candidates.pop(i)
-                        else:
-                            i += 1
-                elif ((i > 0 and candidates[i-1] == 'BOUND') or i == 0):
-                        candidates.pop(i)
-                #if BOUND
-                else:
-                    #we save k-1 elements of the candidate, i - bound index in the prev_lists, prev bound
-                    prev_prev_lists.append([candidates[i-1][0:current_k-1], i, prev_prev_lists[len(prev_prev_lists)-1][1]])
-                    i += 1
-            now2 = time.time()
-            print('Third pruning: ', now2-now1)
-        else:
-            prev_prev_lists = []
-            prev_prev_lists.append([[0], 0, 0])
-            i = 0
-            prev_node = 0
-            while i < len(candidates):
-                if (candidates[i] != 'BOUND'):
-                    if (support(graphs, candidates[i], graphs_len, prev_node) <= min_support):
+
+                indices = set(courses_indices[candidates[i][0]])
+                for j in range(1, current_k-1):
+                    indices = indices & set(courses_indices[candidates[i][j]])
+                indices = list(indices)
+
+                sub_matrix = [trans_matrix[index] for index in indices]
+                while (candidates[i] != 'BOUND') and (i < len(candidates)):
+                    if (support(sub_matrix, candidates[i][current_k-1:], trans_len) <= min_support):
                         candidates.pop(i)
                     else:
                         i += 1
-                    #the candidate remains
-                elif ((i > 0 and candidates[i-1] == 'BOUND') or i == 0):
-                        candidates.pop(i)
-                #if BOUND
-                else:
-                    #we save k-1 elements of the candidate, i - bound index in the prev_lists, prev bound
-                    prev_prev_lists.append([candidates[i-1][0:current_k-1], i, prev_prev_lists[len(prev_prev_lists)-1][1]])
-                    i += 1
+            elif ((i > 0 and candidates[i-1] == 'BOUND') or i == 0):
+                    candidates.pop(i)
+            #if BOUND
+            else:
+                #we save k-1 elements of the candidate, i - bound index in the prev_lists, prev bound
+                prev_prev_lists.append([candidates[i-1][0:current_k-1], i, prev_prev_lists[len(prev_prev_lists)-1][1]])
+                i += 1
+        now2 = time.time()
+        print('Second pruning: ', now2-now1)
 
 
         #now we have only frequent candidates
@@ -339,20 +244,22 @@ def Apriori(transactions, min_support, k):
             result = candidates
         prev_lists = copy.deepcopy(candidates)
         print('Apriori', len(candidates), 'k: ', str(current_k))
-    del graphs
     while 'BOUND' in result:
         result.remove('BOUND')
     for i in range(len(result)):
         for j in range(len(result[i])):
-            result[i][j] = courses[result[i][j]-1]
+            result[i][j] = frequent_courses[result[i][j]]
     return result
-
-
-def main():
-        global dataset
-        GetData()
-        combs = Apriori(GetTransactions(), 0.04, 100)
-        print(len(combs))
+    
+    
+    def main():
+        min_support = 0.05
+        k = 380
+        dataset = get_data()
+        trans_matrix, courses = create_matrix(dataset)
+        combs = Apriori(trans_matrix, courses, min_support, k)
+        del trans_matrix
+        del courses
         print(combs)
 
 
