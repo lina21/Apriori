@@ -1,6 +1,3 @@
-#import matplotlib.pyplot as plt
-#import numpy as np
-#import numpy.random as npr
 import math
 import collections
 import copy
